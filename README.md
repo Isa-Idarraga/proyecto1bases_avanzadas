@@ -27,6 +27,7 @@ reescritura de queries y performance tuning del servidor.
 
 ## Estructura del repositorio
 
+```
 proyecto1bases_avanzadas/
 │
 ├── docs/                  # Informe técnico y documentación
@@ -41,6 +42,7 @@ proyecto1bases_avanzadas/
 │   └── rds_setup.md       # Instrucciones AWS RDS
 ├── resultados/            # Capturas, métricas, planes EXPLAIN
 └── README.md
+```
 
 ---
 
@@ -57,7 +59,7 @@ proyecto1bases_avanzadas/
 ## Cómo replicar el proyecto
 
 ### 1. Clonar el repositorio
-git clone https://github.com/tuusuario/proyecto1bases_avanzadas.git
+git clone https://github.com/Isa-Idarraga/proyecto1bases_avanzadas
 
 ### 2. Levantar la base de datos con Docker
 cd infra
