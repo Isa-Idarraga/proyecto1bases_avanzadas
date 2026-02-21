@@ -1,0 +1,31 @@
+# =============================================
+# EAFITSHOP - Docker Compose PostgreSQL
+# =============================================
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: eafitshop_db
+    restart: always
+    environment:
+      POSTGRES_USER: eafitshop
+      POSTGRES_PASSWORD: eafitshop123
+      POSTGRES_DB: eafitshop
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../sql:/docker-entrypoint-initdb.d
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c work_mem=16MB
+        -c maintenance_work_mem=128MB
+        -c max_connections=100
+        -c log_min_duration_statement=1000
+        -c track_io_timing=on
+
+volumes:
+  postgres_data:
