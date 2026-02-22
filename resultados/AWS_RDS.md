@@ -46,6 +46,7 @@ ORDER BY total_sales DESC;
 | customer | Seq Scan | 152.8 ms |
 | orders | Seq Scan | 676.061 ms |
 
+<img width="1206" height="306" alt="image" src="https://github.com/user-attachments/assets/1229decc-bbf1-4b51-91e3-4206e9a0e8dd" />
 **⏱ Tiempo total: 6.422 s**  
 **Problema:** Seq Scan completo sobre 5M filas de orders. Sin índice en `order_date`.
 
@@ -80,6 +81,8 @@ ORDER BY total_sales DESC;
 | customer | Seq Scan | 133.5 ms |
 | **orders_2023** | Seq Scan | 104.383 ms |
 
+<img width="1206" height="393" alt="image" src="https://github.com/user-attachments/assets/3820e079-15d7-4e4f-9676-56e5490683ff" />
+
 **⏱ Tiempo total: 1.944 s → Mejora del 70%**  
 **Clave:** El partition pruning redujo el escaneo a solo `orders_2023` en lugar de las 5M filas completas.
 
@@ -110,6 +113,9 @@ LIMIT 10;
 |-------|-----------|--------|
 | order_item | Seq Scan | 1533.365 ms |
 | product | Seq Scan | 29.621 ms |
+
+
+<img width="1206" height="432" alt="image" src="https://github.com/user-attachments/assets/89c59b04-e1a4-46a3-93e3-a904e382ca30" />
 
 **⏱ Tiempo total: 23.463 s**  
 **Problema:** 20M filas de order_item leídas completas antes del join.
@@ -147,6 +153,9 @@ LIMIT 10;
 | order_item | Seq Scan | 2471.777 ms |
 | **product** | **Index Scan** | 29.576 ms |
 
+
+<img width="1206" height="335" alt="image" src="https://github.com/user-attachments/assets/e446d5c3-a307-4dab-892e-6ee288f8fece" />
+
 **⏱ Tiempo total: 13.313 s → Mejora del 43%**  
 **Clave:** Al agregar primero, el join recibe solo 100K filas en lugar de 20M. Product ahora usa Index Scan.  
 **Cuello de botella restante:** order_item sigue con Seq Scan — es inevitable porque hay que leer todos los registros para sumar las cantidades.
@@ -175,6 +184,9 @@ LIMIT 20;
 |-------|-----------|--------|
 | orders | Seq Scan | 370.138 ms |
 
+
+<img width="1206" height="404" alt="image" src="https://github.com/user-attachments/assets/4b46d07d-c304-43c3-a70d-1d409148ea41" />
+
 **⏱ Tiempo total: 1.633 s**  
 **Problema:** Seq Scan completo + Sort costoso. Sin índice en `customer_id`.
 
@@ -196,6 +208,9 @@ ON orders (customer_id, order_date DESC, status, total_amount);
 | Tabla | Tipo Scan | Tiempo |
 |-------|-----------|--------|
 | **orders** | **Index Scan** | 0.019 ms |
+
+
+<img width="1206" height="541" alt="image" src="https://github.com/user-attachments/assets/9a187994-f987-42b0-9b91-14b7aa34601f" />
 
 **⏱ Tiempo total: 0.285 ms → Mejora del 99.98%**  
 **Clave:** El índice covering elimina el Seq Scan y el Sort de golpe. PostgreSQL va directo a las filas del cliente ya ordenadas.
@@ -221,6 +236,9 @@ LIMIT 50;
 |-------|-----------|--------|
 | product | Seq Scan | 1.239 ms |
 
+
+<img width="1206" height="384" alt="image" src="https://github.com/user-attachments/assets/527b9c28-5eb7-447a-b7a7-b89676904a67" />
+
 **⏱ Tiempo total: 0.246 s**  
 **Problema:** ILIKE '%texto%' no puede usar índice B-tree. Sin solución con índices tradicionales.
 
@@ -242,6 +260,9 @@ CREATE INDEX idx_product_name_trgm ON product USING gin (name gin_trgm_ops);
 | Tabla | Tipo Scan | Tiempo |
 |-------|-----------|--------|
 | product | Seq Scan | 1.22 ms |
+
+
+<img width="1206" height="619" alt="image" src="https://github.com/user-attachments/assets/58e3e8a3-5527-4355-b4d8-d0ca4c833ef8" />
 
 **⏱ Tiempo total: 0.208 s → Mejora del ~15%**  
 **Nota:** El optimizador sigue eligiendo Seq Scan porque la tabla product tiene 100K filas y es más económico leerla completa. El índice GIN está listo para cuando la tabla crezca a millones de registros y el optimizador lo adoptará automáticamente.
@@ -266,6 +287,9 @@ WHERE date_trunc('day', order_date) = TIMESTAMPTZ '2023-11-15';
 | Tabla | Tipo Scan | Tiempo |
 |-------|-----------|--------|
 | orders | Seq Scan | 449.351 ms |
+
+
+<img width="1206" height="442" alt="image" src="https://github.com/user-attachments/assets/ab544fd7-6f0c-485e-bb25-206d201f3b61" />
 
 **⏱ Tiempo total: 1.844 s**  
 **Problema:** `date_trunc()` sobre la columna rompe el uso de índices B-tree. Anti-pattern clásico.
@@ -293,6 +317,7 @@ WHERE order_date >= TIMESTAMPTZ '2023-11-15 00:00:00'
 | Tabla | Tipo Scan | Tiempo |
 |-------|-----------|--------|
 | **orders** | **Index Only Scan** | 15.73 ms |
+<img width="1206" height="584" alt="image" src="https://github.com/user-attachments/assets/3f7447ad-d9d4-4f22-9576-4e8acb17c9e7" />
 
 **⏱ Tiempo total: 0.310 s → Mejora del 83%**  
 **Clave:** Hacer el predicado sargable permite usar el índice. Heap Fetches = 0 (Index Only Scan).
@@ -304,6 +329,9 @@ FROM orders_partitioned
 WHERE order_date >= TIMESTAMPTZ '2023-11-15 00:00:00'
   AND order_date <  TIMESTAMPTZ '2023-11-16 00:00:00';
 ```
+
+<img width="1206" height="259" alt="image" src="https://github.com/user-attachments/assets/e4cca63c-83ba-4899-9396-d4e9e0ee99e0" />
+
 Partition pruning → solo accede a `orders_2023` → 0.572 s
 
 ---
@@ -334,6 +362,9 @@ ORDER BY n DESC;
 | orders | Seq Scan | 647.725 ms |
 | payment | Seq Scan | 610.263 ms |
 
+
+<img width="1206" height="425" alt="image" src="https://github.com/user-attachments/assets/4cc73fdb-7379-4f1d-a581-759efcf3b359" />
+
 **⏱ Tiempo total: 6.867 s**  
 **Problema:** Seq Scan en ambas tablas. Sin índice en `payment_status` ni en `order_id`.
 
@@ -361,6 +392,8 @@ CREATE INDEX idx_payment_order_id ON payment (order_id);
 |-------|-----------|--------|
 | **payment** | **Index Only Scan** | 690.24 ms |
 | orders | Seq Scan | 843.035 ms |
+
+<img width="1206" height="288" alt="image" src="https://github.com/user-attachments/assets/1895f922-2646-4373-90bc-4b5507d2cf66" />
 
 **⏱ Tiempo total: 7.151 s → Sin mejora significativa**  
 **Análisis:** El índice en payment sí fue adoptado (Index Only Scan), pero el filtro `payment_status = 'APPROVED'` no es selectivo (~33% de registros). El cuello de botella se desplazó a orders que sigue con Seq Scan porque recibe demasiadas filas del join.
