@@ -41,6 +41,8 @@ ORDER BY total_sales DESC;
 | Join | Hash Inner Join |
 | Paralelismo | Parallel workers activos |
 
+![alt text](image.png)
+
 **⏱ Tiempo total: 3147 ms**  
 **Problema:** Lectura completa de orders sin índice en `order_date`. Alto costo de I/O leyendo millones de páginas para luego descartar la mayoría por el filtro de fechas.
 
@@ -59,6 +61,8 @@ ON orders (order_date, customer_id);
 | Heap Fetches | **0** (eliminados completamente) |
 | Buffers | shared hit=1128 read=11065 |
 | Join | Hash Inner Join |
+
+![alt text](image-6.png)
 
 **⏱ Tiempo total: 2999 ms → Mejora del 5%**  
 **Clave:** PostgreSQL ya no lee la tabla orders, solo el índice (más pequeño), eliminando todos los heap fetches.  
@@ -84,6 +88,8 @@ LIMIT 10;
 | Filas leídas | ~6.6M × 3 workers = **~20M filas** |
 | Buffers read | 166.667 páginas desde disco |
 | Join | Hash Inner Join (~28.4 s) |
+
+![alt text](image-1.png)
 
 **⏱ Tiempo total: 42216 ms**  
 **Problema:** Lectura completa de 20M filas de order_item antes del join. El join recibe un volumen masivo de datos.
@@ -111,6 +117,8 @@ LIMIT 10;
 | Buffers read | **847** (vs 166.667 antes) |
 | JIT | Activado (Functions: 43, Total 135 ms) |
 
+![alt text](image-7.png)
+
 **⏱ Tiempo total: 20803 ms → Mejora del 51%**  
 **Clave:** Al agregar primero, el join recibe solo 100K filas (una por producto) en lugar de 20M. La reducción de buffers de 166.667 a 847 confirma el impacto.  
 **Conclusión:** La optimización lógica (reescritura) tuvo mayor impacto que cualquier índice en este caso.
@@ -135,6 +143,8 @@ LIMIT 20;
 | Buffers read | 41.667 páginas |
 | Sort | Sort costoso por order_date DESC |
 
+![alt text](image-2.png)
+
 **⏱ Tiempo total: 1610 ms**  
 **Problema:** El motor revisa TODA la tabla para encontrar las órdenes de un solo cliente, luego ordena las pocas filas encontradas.
 
@@ -153,6 +163,8 @@ ON orders (customer_id, order_date DESC);
 | Buffers | hit=3 read=14 (solo 17 páginas!) |
 | Sort | **Eliminado** |
 | Heap Fetches | Mínimos |
+
+![alt text](image-8.png)
 
 **⏱ Tiempo total: 0.166 ms → Mejora del 99.99%**  
 **Clave:** El índice compuesto satisface simultáneamente el filtro por `customer_id` y el ordenamiento por `order_date DESC`, sin necesidad de leer la tabla ni hacer Sort. De 41.667 páginas a solo 17.
@@ -174,6 +186,8 @@ LIMIT 50;
 | Scan | Seq Scan on product |
 | Problema | `%texto%` no puede usar índice B-Tree |
 
+![alt text](image-3.png)
+
 **⏱ Tiempo total: 1.352 ms**  
 **Problema:** El comodín inicial `%` impide que el motor sepa dónde comienza la cadena, bloqueando el uso de índices B-Tree.
 
@@ -191,6 +205,8 @@ ON product USING gin (name gin_trgm_ops);
 |------|---------|
 | Scan | Seq Scan (sigue igual) |
 | Buffers | hit=1 |
+
+![alt text](image-9.png)
 
 **⏱ Tiempo total: 1.635 ms → Sin mejora visible**  
 **Nota:** El optimizador sigue eligiendo Seq Scan porque la tabla product es pequeña (100K filas). El índice GIN descompone cada nombre en trigramas de 3 caracteres y está listo para cuando la tabla crezca a millones de registros, momento en que el motor lo adoptará automáticamente.
@@ -211,6 +227,8 @@ WHERE date_trunc('day', order_date) = TIMESTAMPTZ '2023-11-15';
 | Scan | Parallel Seq Scan on orders |
 | Filas descartadas | 1.665.739 por filtro |
 | Por qué falla | `date_trunc()` sobre columna rompe el índice B-Tree |
+
+![alt text](image-4.png)
 
 **⏱ Tiempo total: 649 ms**  
 **Problema:** Aplicar una función sobre la columna en el WHERE hace el predicado no sargable — el motor calcula `date_trunc()` fila por fila en lugar de usar el índice.
@@ -236,6 +254,8 @@ WHERE order_date >= TIMESTAMPTZ '2023-11-15 00:00:00'
 | Buffers | hit=5661 read=2675 |
 | Heap Fetches | 0 |
 
+![alt text](image-10.png)
+
 **⏱ Tiempo total: 75.593 ms → Mejora del 88%**  
 **Clave:** Al reescribir como rango, el predicado se vuelve sargable y PostgreSQL puede usar el índice B-Tree directamente. De leer millones de filas a leer solo las del día requerido.
 
@@ -260,6 +280,8 @@ ORDER BY n DESC;
 | Filas descartadas | ~1.000.275 por worker en payment |
 | Join | Parallel Hash Join |
 
+![alt text](image-5.png)
+
 **⏱ Tiempo total: 7228 ms**  
 **Problema:** Seq Scan completo en ambas tablas. Sin índice en `payment_status` ni en la FK `order_id`.
 
@@ -278,6 +300,8 @@ ON payment (payment_status, order_id);
 | Scan orders | Parallel Seq Scan (sigue igual) |
 | Buffers | hit=12 |
 | JIT | Activado (Functions: 48, Total 39.595 ms) |
+
+![alt text](image-11.png)
 
 **⏱ Tiempo total: 6626 ms → Mejora del 8%**  
 **Clave:** El índice en payment fue adoptado correctamente (Index Only Scan), reduciendo el acceso a esa tabla.  
