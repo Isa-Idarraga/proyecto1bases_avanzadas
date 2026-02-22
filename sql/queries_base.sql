@@ -1,107 +1,56 @@
--- =============================================
--- EAFITSHOP - Queries Línea Base
--- Ejecutar con EXPLAIN ANALYZE para medir
--- rendimiento ANTES de optimizaciones
--- =============================================
+-- 04_base_queries.sql
+-- Consultas "base" deliberadamente ineficientes para el laboratorio.
+-- Instrucción: ejecuta cada una con EXPLAIN (ANALYZE, BUFFERS) y registra:
+-- - Plan
+-- - Tiempo total
+-- - Filas estimadas vs reales
 
--- =============================================
--- Q1: Órdenes de un cliente específico
--- (simula consulta operativa frecuente)
--- =============================================
-EXPLAIN ANALYZE
-SELECT o.order_id, o.status, o.total, o.created_at
-FROM orders o
-WHERE o.customer_id = 500;
-
--- =============================================
--- Q2: Detalle completo de una orden
--- (join sin índices en FK)
--- =============================================
-EXPLAIN ANALYZE
-SELECT o.order_id, c.first_name, c.last_name,
-       p.name AS product, oi.quantity, oi.unit_price
-FROM orders o
-JOIN customer c ON c.customer_id = o.customer_id
-JOIN order_item oi ON oi.order_id = o.order_id
-JOIN product p ON p.product_id = oi.product_id
-WHERE o.order_id = 1000;
-
--- =============================================
--- Q3: Total de ventas por categoría
--- (agregación masiva - reporte)
--- =============================================
-EXPLAIN ANALYZE
-SELECT p.category,
-       COUNT(oi.item_id) AS total_items,
-       SUM(oi.quantity * oi.unit_price) AS total_ventas
-FROM order_item oi
-JOIN product p ON p.product_id = oi.product_id
-GROUP BY p.category
-ORDER BY total_ventas DESC;
-
--- =============================================
--- Q4: Órdenes por rango de fechas
--- (consulta histórica sin partición)
--- =============================================
-EXPLAIN ANALYZE
-SELECT COUNT(*), SUM(total)
-FROM orders
-WHERE created_at BETWEEN '2023-01-01' AND '2023-12-31';
-
--- =============================================
--- Q5: Clientes con más compras
--- (reporte que afecta OLTP)
--- =============================================
-EXPLAIN ANALYZE
-SELECT c.customer_id, c.first_name, c.last_name,
-       COUNT(o.order_id) AS total_ordenes,
-       SUM(o.total) AS total_gastado
+-- Q1: Ventas por ciudad en un año (sin índices en orders.order_date ni orders.customer_id)
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.city, SUM(o.total_amount) AS total_sales
 FROM customer c
-JOIN orders o ON o.customer_id = c.customer_id
-GROUP BY c.customer_id, c.first_name, c.last_name
-ORDER BY total_gastado DESC
+JOIN orders o ON c.customer_id = o.customer_id
+WHERE o.order_date >= TIMESTAMPTZ '2023-01-01'
+  AND o.order_date <  TIMESTAMPTZ '2024-01-01'
+GROUP BY c.city
+ORDER BY total_sales DESC;
+
+-- Q2: Top productos vendidos (agregación masiva)
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT p.name, SUM(oi.quantity) AS total_sold
+FROM order_item oi
+JOIN product p ON oi.product_id = p.product_id
+GROUP BY p.name
+ORDER BY total_sold DESC
 LIMIT 10;
 
--- =============================================
--- Q6: Pagos pendientes con detalle
--- (operativa diaria)
--- =============================================
-EXPLAIN ANALYZE
-SELECT p.payment_id, o.order_id, c.email,
-       p.amount, p.method, p.payment_date
-FROM payment p
-JOIN orders o ON o.order_id = p.order_id
-JOIN customer c ON c.customer_id = o.customer_id
-WHERE p.status = 'pending'
-ORDER BY p.payment_date DESC
-LIMIT 100;
-
--- =============================================
--- Q7: Productos más vendidos
--- (reporte de inteligencia de negocio)
--- =============================================
-EXPLAIN ANALYZE
-SELECT p.product_id, p.name, p.category,
-       SUM(oi.quantity) AS unidades_vendidas,
-       SUM(oi.quantity * oi.unit_price) AS ingresos
-FROM order_item oi
-JOIN product p ON p.product_id = oi.product_id
-GROUP BY p.product_id, p.name, p.category
-ORDER BY unidades_vendidas DESC
+-- Q3: Dashboard: últimas órdenes de un cliente (filtro + sort)
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM orders
+WHERE customer_id = 12345
+ORDER BY order_date DESC
 LIMIT 20;
 
--- =============================================
--- RESUMEN: Guardar tiempos de cada query
--- para comparar después de optimizar
--- =============================================
-/*
-| Query | Tiempo Línea Base | Tipo Scan | Costo |
-|-------|------------------|-----------|-------|
-| Q1    |                  |           |       |
-| Q2    |                  |           |       |
-| Q3    |                  |           |       |
-| Q4    |                  |           |       |
-| Q5    |                  |           |       |
-| Q6    |                  |           |       |
-| Q7    |                  |           |       |
-*/
+-- Q4: Degradación típica: LIKE con comodín inicial (no sargable)
+-- (Incluso con índice normal, '%texto' suele forzar scan)
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM product
+WHERE name ILIKE '%42%'
+LIMIT 50;
+
+-- Q5: Anti-pattern: función sobre columna en WHERE (rompe uso directo de índice)
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*)
+FROM orders
+WHERE date_trunc('day', order_date) = TIMESTAMPTZ '2023-11-15';
+
+-- Q6: Join + filtro por status (sin índices)
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.status, count(*) AS n
+FROM orders o
+JOIN payment p ON p.order_id = o.order_id
+WHERE p.payment_status = 'APPROVED'
+GROUP BY o.status
+ORDER BY n DESC;

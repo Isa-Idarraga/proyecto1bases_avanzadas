@@ -1,183 +1,186 @@
--- =============================================
--- EAFITSHOP - Optimizaciones Incrementales
--- Aplicar una por una y medir después de cada
--- una con mediciones.sql
--- =============================================
+-- ============================================================
+-- EAFITSHOP - OPTIMIZACIONES COMPLETAS EN AWS RDS
+-- Incluye: índices básicos, índices adicionales, 
+--          reescrituras y particionamiento
+-- ============================================================
 
--- =============================================
--- PASO 1: ÍNDICES EN FOREIGN KEYS
--- =============================================
+-- ============================================================
+-- PASO 1: OPTIMIZACIONES BÁSICAS (igual que EC2)
+-- ============================================================
 
--- orders.customer_id
-CREATE INDEX idx_orders_customer_id 
-ON orders(customer_id);
+-- Q1: Índice compuesto para filtro por fecha + join
+CREATE INDEX idx_orders_orderdate_customer 
+ON orders (order_date, customer_id);
 
--- order_item.order_id
-CREATE INDEX idx_order_item_order_id 
-ON order_item(order_id);
+-- Q3: Índice compuesto con orden para dashboard cliente
+CREATE INDEX idx_orders_customer_date 
+ON orders (customer_id, order_date DESC);
 
--- order_item.product_id
-CREATE INDEX idx_order_item_product_id 
-ON order_item(product_id);
+-- Q4: GIN + pg_trgm para búsquedas ILIKE
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_product_name_trgm 
+ON product USING gin (name gin_trgm_ops);
 
--- payment.order_id
-CREATE INDEX idx_payment_order_id 
-ON payment(order_id);
+-- Q5: Índice en order_date para reescritura de rango
+CREATE INDEX idx_orders_orderdate 
+ON orders (order_date);
 
--- =============================================
--- PASO 2: ÍNDICES POR COLUMNAS DE FILTRO
--- =============================================
+-- Q6: Índice compuesto en payment para filtro + join
+CREATE INDEX idx_payment_status_order 
+ON payment (payment_status, order_id);
 
--- orders por status (Q6 pagos pendientes)
-CREATE INDEX idx_orders_status 
-ON orders(status);
+-- ============================================================
+-- PASO 2: OPTIMIZACIONES ADICIONALES
+-- ============================================================
 
--- orders por fecha (Q4 rango de fechas)
-CREATE INDEX idx_orders_created_at 
-ON orders(created_at);
+-- Q1: Índice covering para evitar heap fetch
+CREATE INDEX idx_orders_covering_q1
+ON orders (order_date, customer_id, total_amount);
 
--- payment por status
-CREATE INDEX idx_payment_status 
-ON payment(status);
+-- Q2: Índices en FK de order_item para join y agregación
+CREATE INDEX idx_orderitem_product_id
+ON order_item (product_id);
 
--- product por category (Q3 ventas por categoría)
-CREATE INDEX idx_product_category 
-ON product(category);
+CREATE INDEX idx_orderitem_product_qty
+ON order_item (product_id, quantity);
 
--- =============================================
--- PASO 3: ÍNDICES COMPUESTOS
--- =============================================
+-- Q3: Índice covering completo
+CREATE INDEX idx_orders_covering_q3
+ON orders (customer_id, order_date DESC, status, total_amount);
 
--- orders por customer_id + status juntos
-CREATE INDEX idx_orders_customer_status 
-ON orders(customer_id, status);
+-- Q5: Índice funcional para date_trunc
+CREATE INDEX idx_orders_date_trunc
+ON orders (date_trunc('day', order_date));
 
--- payment por status + payment_date
-CREATE INDEX idx_payment_status_date 
-ON payment(status, payment_date DESC);
+-- Q6: Índices adicionales en orders y payment
+CREATE INDEX idx_orders_status
+ON orders (status);
 
--- order_item por order_id + product_id
-CREATE INDEX idx_order_item_order_product 
-ON order_item(order_id, product_id);
+CREATE INDEX idx_payment_order_id
+ON payment (order_id);
 
--- =============================================
--- PASO 4: PARTICIONAMIENTO
--- Particionar orders por año
--- =============================================
+-- ============================================================
+-- PASO 3: PARTICIONAMIENTO DE ORDERS POR AÑO
+-- ============================================================
 
--- Crear tabla particionada
 CREATE TABLE orders_partitioned (
-    order_id    SERIAL,
-    customer_id INTEGER,
-    status      VARCHAR(50) DEFAULT 'pending',
-    total       NUMERIC(10,2),
-    created_at  TIMESTAMP DEFAULT NOW()
-) PARTITION BY RANGE (created_at);
+    order_id      BIGINT,
+    customer_id   BIGINT NOT NULL,
+    order_date    TIMESTAMPTZ NOT NULL,
+    status        order_status NOT NULL,
+    total_amount  NUMERIC(12,2) NOT NULL CHECK (total_amount >= 0),
+    PRIMARY KEY (order_id, order_date)
+) PARTITION BY RANGE (order_date);
 
--- Crear particiones por año
-CREATE TABLE orders_2022 
-PARTITION OF orders_partitioned
+CREATE TABLE orders_2021 PARTITION OF orders_partitioned
+FOR VALUES FROM ('2021-01-01') TO ('2022-01-01');
+
+CREATE TABLE orders_2022 PARTITION OF orders_partitioned
 FOR VALUES FROM ('2022-01-01') TO ('2023-01-01');
 
-CREATE TABLE orders_2023 
-PARTITION OF orders_partitioned
+CREATE TABLE orders_2023 PARTITION OF orders_partitioned
 FOR VALUES FROM ('2023-01-01') TO ('2024-01-01');
 
-CREATE TABLE orders_2024 
-PARTITION OF orders_partitioned
+CREATE TABLE orders_2024 PARTITION OF orders_partitioned
 FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 
-CREATE TABLE orders_2025 
-PARTITION OF orders_partitioned
+CREATE TABLE orders_2025 PARTITION OF orders_partitioned
 FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
 
--- Migrar datos de orders a orders_partitioned
-INSERT INTO orders_partitioned 
-SELECT * FROM orders;
+CREATE TABLE orders_2026 PARTITION OF orders_partitioned
+FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
 
--- =============================================
--- PASO 5: REESCRITURA DE QUERIES
--- =============================================
+INSERT INTO orders_partitioned SELECT * FROM orders;
 
--- Q3 original: join masivo
--- Q3 optimizada: usando CTE
-EXPLAIN ANALYZE
-WITH ventas AS (
-    SELECT product_id,
-           SUM(quantity * unit_price) AS total_ventas,
-           COUNT(*) AS total_items
+-- Verificar distribución de particiones
+SELECT tableoid::regclass AS particion, count(*) AS filas
+FROM orders_partitioned 
+GROUP BY tableoid::regclass
+ORDER BY particion;
+
+
+-- ============================================================
+-- QUERIES OPTIMIZADOS - EJECUTAR CON EXPLAIN (ANALYZE, BUFFERS)
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- Q1 OPTIMIZADO: Ventas por ciudad en un año
+-- Usa: idx_orders_covering_q1 (Index Only Scan)
+-- Sobre tabla PARTICIONADA para partition pruning
+-- ------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.city, SUM(o.total_amount) AS total_sales
+FROM customer c
+JOIN orders_partitioned o ON c.customer_id = o.customer_id
+WHERE o.order_date >= TIMESTAMPTZ '2023-01-01'
+  AND o.order_date <  TIMESTAMPTZ '2024-01-01'
+GROUP BY c.city
+ORDER BY total_sales DESC;
+
+-- ------------------------------------------------------------
+-- Q2 OPTIMIZADO: Top productos vendidos
+-- Reescritura: agrega PRIMERO, luego hace join
+-- Usa: idx_orderitem_product_qty
+-- ------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT p.name, s.total_sold
+FROM (
+    SELECT product_id, SUM(quantity) AS total_sold
     FROM order_item
     GROUP BY product_id
-)
-SELECT p.category,
-       SUM(v.total_items) AS total_items,
-       SUM(v.total_ventas) AS total_ventas
-FROM ventas v
-JOIN product p ON p.product_id = v.product_id
-GROUP BY p.category
-ORDER BY total_ventas DESC;
+) s
+JOIN product p ON p.product_id = s.product_id
+ORDER BY s.total_sold DESC
+LIMIT 10;
 
--- Q5 original: GROUP BY masivo
--- Q5 optimizada: con LIMIT anticipado
-EXPLAIN ANALYZE
-WITH top_orders AS (
-    SELECT customer_id,
-           COUNT(*) AS total_ordenes,
-           SUM(total) AS total_gastado
-    FROM orders
-    GROUP BY customer_id
-    ORDER BY total_gastado DESC
-    LIMIT 10
-)
-SELECT t.customer_id, c.first_name, c.last_name,
-       t.total_ordenes, t.total_gastado
-FROM top_orders t
-JOIN customer c ON c.customer_id = t.customer_id
-ORDER BY t.total_gastado DESC;
+-- ------------------------------------------------------------
+-- Q3 OPTIMIZADO: Últimas órdenes de un cliente
+-- Usa: idx_orders_covering_q3 (Index Only Scan sin Sort)
+-- ------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM orders
+WHERE customer_id = 12345
+ORDER BY order_date DESC
+LIMIT 20;
 
--- =============================================
--- PASO 6: PERFORMANCE TUNING DEL SERVIDOR
--- =============================================
+-- ------------------------------------------------------------
+-- Q4 OPTIMIZADO: LIKE con comodín inicial
+-- Usa: idx_product_name_trgm (GIN trigram)
+-- ------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM product
+WHERE name ILIKE '%42%'
+LIMIT 50;
 
--- Ver configuración actual
-SHOW shared_buffers;
-SHOW work_mem;
-SHOW maintenance_work_mem;
-SHOW max_connections;
-SHOW effective_cache_size;
+-- ------------------------------------------------------------
+-- Q5 OPTIMIZADO: Conteo por fecha
+-- Reescritura: WHERE en forma de rango (sargable)
+-- Usa: idx_orders_orderdate (Index Only Scan)
+-- También funciona con idx_orders_date_trunc
+-- ------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*)
+FROM orders
+WHERE order_date >= TIMESTAMPTZ '2023-11-15 00:00:00'
+  AND order_date <  TIMESTAMPTZ '2023-11-16 00:00:00';
 
--- Parámetros recomendados para EC2 con 4GB RAM
--- (modificar en docker-compose.yml o postgresql.conf)
-/*
-shared_buffers = 1GB                 -- 25% de RAM
-work_mem = 32MB                      -- para sorts y hashes
-maintenance_work_mem = 256MB         -- para VACUUM, índices
-effective_cache_size = 3GB           -- 75% de RAM
-max_connections = 100
-random_page_cost = 1.1               -- si usas SSD
-log_min_duration_statement = 500     -- loguear queries > 500ms
-track_io_timing = on
-*/
+-- Con tabla particionada (partition pruning a orders_2023):
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*)
+FROM orders_partitioned
+WHERE order_date >= TIMESTAMPTZ '2023-11-15 00:00:00'
+  AND order_date <  TIMESTAMPTZ '2023-11-16 00:00:00';
 
--- Actualizar estadísticas después de cargar datos
-ANALYZE customer;
-ANALYZE product;
-ANALYZE orders;
-ANALYZE order_item;
-ANALYZE payment;
-
--- Ver estadísticas de uso de índices
-SELECT schemaname, tablename, indexname,
-       idx_scan, idx_tup_read, idx_tup_fetch
-FROM pg_stat_user_indexes
-ORDER BY idx_scan DESC;
-
--- Ver tamaño de tablas e índices
-SELECT
-    relname AS tabla,
-    pg_size_pretty(pg_total_relation_size(relid)) AS tamaño_total,
-    pg_size_pretty(pg_relation_size(relid)) AS tamaño_tabla,
-    pg_size_pretty(pg_total_relation_size(relid) - 
-                   pg_relation_size(relid)) AS tamaño_indices
-FROM pg_catalog.pg_statio_user_tables
-ORDER BY pg_total_relation_size(relid) DESC;
+-- ------------------------------------------------------------
+-- Q6 OPTIMIZADO: Join + filtro por status
+-- Usa: idx_payment_status_order + idx_orders_status
+-- ------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.status, count(*) AS n
+FROM orders o
+JOIN payment p ON p.order_id = o.order_id
+WHERE p.payment_status = 'APPROVED'
+GROUP BY o.status
+ORDER BY n DESC;

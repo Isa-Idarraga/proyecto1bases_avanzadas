@@ -1,52 +1,59 @@
--- =============================================
--- EAFITSHOP - Schema Base de Datos
--- =============================================
+-- 01_schema.sql
+-- EAFIT - Bases de Datos Avanzadas: Unidad de Optimización (PostgreSQL)
+-- Esquema OLTP estilo e-commerce: diseñado para generar cuellos de botella si NO se crean índices.
 
--- Clientes
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'order_status') THEN
+    DROP TYPE order_status;
+  END IF;
+END$$;
+
+DROP TABLE IF EXISTS payment CASCADE;
+DROP TABLE IF EXISTS order_item CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS product CASCADE;
+DROP TABLE IF EXISTS customer CASCADE;
+
+-- Tipos
+CREATE TYPE order_status AS ENUM ('CREATED','PAID','SHIPPED','COMPLETED','CANCELLED');
+
+-- Tablas
 CREATE TABLE customer (
-    customer_id SERIAL PRIMARY KEY,
-    first_name  VARCHAR(100) NOT NULL,
-    last_name   VARCHAR(100) NOT NULL,
-    email       VARCHAR(150) UNIQUE NOT NULL,
-    phone       VARCHAR(20),
-    city        VARCHAR(100),
-    created_at  TIMESTAMP DEFAULT NOW()
+  customer_id   BIGINT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL,
+  city          TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Productos
 CREATE TABLE product (
-    product_id   SERIAL PRIMARY KEY,
-    name         VARCHAR(200) NOT NULL,
-    category     VARCHAR(100),
-    price        NUMERIC(10,2) NOT NULL,
-    stock        INTEGER DEFAULT 0,
-    created_at   TIMESTAMP DEFAULT NOW()
+  product_id    BIGINT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  category      TEXT NOT NULL,
+  price         NUMERIC(12,2) NOT NULL CHECK (price >= 0)
 );
 
--- Órdenes
 CREATE TABLE orders (
-    order_id    SERIAL PRIMARY KEY,
-    customer_id INTEGER REFERENCES customer(customer_id),
-    status      VARCHAR(50) DEFAULT 'pending',
-    total       NUMERIC(10,2),
-    created_at  TIMESTAMP DEFAULT NOW()
+  order_id      BIGINT PRIMARY KEY,
+  customer_id   BIGINT NOT NULL REFERENCES customer(customer_id),
+  order_date    TIMESTAMPTZ NOT NULL,
+  status        order_status NOT NULL,
+  total_amount  NUMERIC(12,2) NOT NULL CHECK (total_amount >= 0)
 );
 
--- Detalle de órdenes
 CREATE TABLE order_item (
-    item_id    SERIAL PRIMARY KEY,
-    order_id   INTEGER REFERENCES orders(order_id),
-    product_id INTEGER REFERENCES product(product_id),
-    quantity   INTEGER NOT NULL,
-    unit_price NUMERIC(10,2) NOT NULL
+  order_item_id BIGINT PRIMARY KEY,
+  order_id      BIGINT NOT NULL REFERENCES orders(order_id),
+  product_id    BIGINT NOT NULL REFERENCES product(product_id),
+  quantity      INT NOT NULL CHECK (quantity > 0),
+  unit_price    NUMERIC(12,2) NOT NULL CHECK (unit_price >= 0)
 );
 
--- Pagos
 CREATE TABLE payment (
-    payment_id     SERIAL PRIMARY KEY,
-    order_id       INTEGER REFERENCES orders(order_id),
-    method         VARCHAR(50),
-    status         VARCHAR(50) DEFAULT 'pending',
-    amount         NUMERIC(10,2),
-    payment_date   TIMESTAMP DEFAULT NOW()
+  payment_id     BIGINT PRIMARY KEY,
+  order_id       BIGINT NOT NULL REFERENCES orders(order_id),
+  payment_date   TIMESTAMPTZ NOT NULL,
+  payment_method TEXT NOT NULL,
+  payment_status TEXT NOT NULL
 );
