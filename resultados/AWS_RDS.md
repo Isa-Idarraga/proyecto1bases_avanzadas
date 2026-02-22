@@ -414,8 +414,3 @@ CREATE INDEX idx_payment_order_id ON payment (order_id);
 ### Lo que no mejoró visiblemente
 - **Q4** el índice GIN está listo pero la tabla es aún pequeña para que el optimizador lo prefiera. Escalará automáticamente cuando la tabla crezca.
 
-### Diferencias clave vs EC2 con Docker
-- RDS no permite editar `postgresql.conf` directamente — se configura via **Parameter Groups**
-- El particionamiento funciona igual en ambos ambientes
-- RDS tiene latencia de red adicional por ser un servicio administrado
-- RDS facilita backups, escalado y mantenimiento sin intervención manual
