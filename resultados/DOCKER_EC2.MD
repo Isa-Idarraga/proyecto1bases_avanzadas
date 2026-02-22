@@ -41,7 +41,7 @@ ORDER BY total_sales DESC;
 | Join | Hash Inner Join |
 | Paralelismo | Parallel workers activos |
 
-![alt text](imagenes_docker\image.png)
+![alt text](imagenes_docker/image.png)
 
 **⏱ Tiempo total: 3147 ms**  
 **Problema:** Lectura completa de orders sin índice en `order_date`. Alto costo de I/O leyendo millones de páginas para luego descartar la mayoría por el filtro de fechas.
